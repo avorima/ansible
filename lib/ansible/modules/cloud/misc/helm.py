@@ -116,32 +116,37 @@ from ansible.module_utils.basic import AnsibleModule
 
 
 def install(module, tserver):
-    changed = False
-    params = module.params
-    name = params['name']
-    values = params['values']
-    chart = module.params['chart']
-    namespace = module.params['namespace']
+    changed   = False
+    params    = module.params
+    dry_run   = module.check_mode
+    name      = params['name']
+    values    = params['values']
+    chart     = params['chart']
+    namespace = params['namespace']
 
     chartb = chartbuilder.ChartBuilder(chart)
     r_matches = (x for x in tserver.list_releases()
                  if x.name == name and x.namespace == namespace)
     installed_release = next(r_matches, None)
     if installed_release:
-        if installed_release.chart.metadata.version != chart['version']:
-            tserver.update_release(chartb.get_helm_chart(), False,
-                                   namespace, name=name, values=values)
-            changed = True
+        if installed_release.chart.metadata.version != chart.get('version', ''):
+            tserver.update_release(chartb.get_helm_chart(), namespace,
+                                   dry_run=dry_run, name=name, values=values)
+            if not dry_run:
+                changed = True
     else:
         tserver.install_release(chartb.get_helm_chart(), namespace,
-                                dry_run=False, name=name,
-                                values=values)
-        changed = True
+                                dry_run=dry_run, name=name, values=values)
+        if not dry_run:
+            changed = True
 
     return dict(changed=changed)
 
 
 def delete(module, tserver, purge=False):
+    if module.check_mode:
+        return dict(msg="skipped, running in check mode", skipped=True)
+
     changed = False
     params = module.params
 
@@ -180,15 +185,16 @@ def main():
             # Uninstall options
             disable_hooks=dict(type='bool', default=False),
         ),
-        supports_check_mode=True)
+        supports_check_mode=True,
+    )
 
     if not HAS_PYHELM:
         module.fail_json(msg="Could not import the pyhelm python module. "
                          "Please install `pyhelm` package.")
 
-    host = module.params['host']
-    port = module.params['port']
-    state = module.params['state']
+    host    = module.params['host']
+    port    = module.params['port']
+    state   = module.params['state']
     tserver = tiller.Tiller(host, port)
 
     if state == 'present':
